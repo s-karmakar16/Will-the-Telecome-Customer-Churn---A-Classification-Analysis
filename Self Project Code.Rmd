@@ -1,0 +1,253 @@
+---
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r}
+paste("Title: Will the Telecom Customer Churn?- A Classification Analysis")
+paste("Authors: Rajdeep Saha & Soumik Karmakar")
+```
+
+```{r}
+rm(list=ls())
+library(ggplot2)
+library(leaps)
+library(caret)
+library(car)
+library(corrplot)
+library(tree)
+library(MASS)
+library(randomForest)
+library(pROC)
+library(tibble)
+library(cvms)
+library(e1071)
+```
+
+```{r}
+#data access
+df <- read.csv("C:/Users/user/OneDrive/Desktop/Self Project/Self Project Data.csv")
+head(df)
+dim(df)
+str(df)
+n <- nrow(df)
+```
+
+```{r}
+#id column remove
+colnames(df)
+df <- df[-which(colnames(df) == 'customerID')]
+head(df)
+```
+
+```{r}
+#missing value imputation
+df$TotalCharges <- as.numeric(df$TotalCharges)
+miss = which(is.na(df$TotalCharges) == TRUE)
+df$TotalCharges[miss] <- median(df$TotalCharges, na.rm = TRUE) 
+str(df)
+```
+
+```{r}
+#No Service to No
+for(i in (which(colnames(df) == 'OnlineSecurity') : which(colnames(df) == 'StreamingMovies'))){
+  df[i] <- as.factor(ifelse(df[i] != 'Yes', 'No', 'Yes'))
+}
+df$InternetService <- as.factor(ifelse(df$InternetService != 'No', 'Yes', 'No'))
+df$MultipleLines <- as.factor(ifelse(df$MultipleLines != 'Yes', 'No', 'Yes'))
+df$SeniorCitizen <- as.factor(df$SeniorCitizen)
+
+for(i in 1:ncol(df)){
+  if(class(df[,i]) == 'character'){
+    df[,i] <- as.factor(df[,i])
+  }
+}
+str(df)
+```
+
+```{r}
+#Correlation between numeric variables
+cr <-cor(df[,c(5,18,19)])
+corrplot(cr, method="circle")
+```
+
+```{r}
+#EDA
+p1 <- ggplot(df, aes(x = Churn, fill = Churn)) +facet_grid(~gender)+ geom_bar() +ggtitle("Churn - Gender") + theme_bw()
+p2 <- ggplot(df, aes(x = Churn, fill = Churn)) +facet_grid(~SeniorCitizen)+ geom_bar() + ggtitle("Churn - SeniorCitizen") + theme_bw()
+p3 <- ggplot(df, aes(x = Churn, fill = Churn)) +facet_grid(~Dependents)+ geom_bar() + ggtitle("Churn - Dependents") + theme_bw()
+p4 <- ggplot(df, aes(x = Churn, fill = Churn)) +facet_grid(~Partner)+ geom_bar() + ggtitle("Churn - Partner") + theme_bw()
+p5 <- ggplot(df, aes(x = Churn, fill = Churn)) +facet_grid(~PhoneService)+ geom_bar() + ggtitle("Churn - PhoneService")+ theme_bw()
+p6 <- ggplot(df, aes(x = Churn, fill = Churn)) +facet_grid(~InternetService)+ geom_bar() + ggtitle("Churn - InternetService") + theme_bw()
+p7 <- ggplot(df, aes(x = Churn, fill = Churn)) +facet_grid(~PaperlessBilling)+ geom_bar() + ggtitle("Churn - PaperlessBilling") + theme_bw()
+p8 <- ggplot(df, aes(x = Churn, fill = Churn)) +facet_grid(~PaymentMethod)+ geom_bar() + ggtitle("Churn - Payment Method") + theme_bw()
+ggpubr::ggarrange(p1,p2,p3,p4,p5,p6,p7,p8, nrow = 3, ncol = 3) 
+```
+
+```{r}
+#dummification
+attach(df)
+to_dummy <- data.frame(Contract,PaymentMethod)
+dmy <- dummyVars(" ~ .", data = to_dummy)
+df2 <- data.frame(predict(dmy, newdata = to_dummy))
+df2 <- df2[, !(colnames(df2) %in% c("Contract.Month.to.month", "PaymentMethod.Bank.transfer..automatic."))]
+df <- df[,!(colnames(df) %in% c("Contract","PaymentMethod","TotalCharges"))]
+df <- cbind(df, df2)
+head(df)
+attach(df)
+dim(df)
+```
+
+```{r}
+#Feature Selection
+
+regfit.full=regsubsets(Churn~.,data=df,nvmax=21)
+reg.summary=summary(regfit.full)
+names(reg.summary)
+which.min(reg.summary$bic)
+plot(reg.summary$bic,xlab="No. of Variables",ylab=expression(paste("BIC")),type="l")
+points(12,reg.summary$bic[12],col="red",cex=2,pch=20)
+names(coef(regfit.full,12))[-1]
+```
+
+```{r}
+#Final Dataset
+data=df[,-c(1,3,4,7,8,13,14,20,22)]
+dim(data)
+```
+
+```{r}
+#train-test split:
+set.seed(2021)
+index1=sample(1:nrow(data),floor(0.7*nrow(data)))
+train=data[index1,]
+remaining=data[-index1,]
+index2=sample(1:nrow(remaining),floor(2/3*nrow(remaining)))
+crossval=remaining[index2,]
+test=remaining[-index2,]
+actual_churn=crossval$Churn
+print("The data is successfully split into Training, Cross Validation and Test Set")
+```
+
+```{r}
+f_cfm <- function(x){
+  cfm <- as.tibble(x)
+  cname <- colnames(cfm)
+  print(plot_confusion_matrix(cfm, target_col = cname[2], prediction_col =  cname[1], counts_col = cname[3]))
+}
+```
+
+```{r}
+f_bar <- function(pred, act){
+  d1 <- as.matrix(data.frame(as.vector(table(pred)), as.vector(table(act))))
+  colnames(d1) <- c("Predicted","Actual")
+  rownames(d1) <- c("Yes","No")
+  barplot(d1, main="Ratio of Yes and No in Predicted and Actual",col=c("pink","cyan"))
+  legend("topright",c("No","Yes"),fill=c("pink","cyan")) 
+}
+```
+
+```{r, warning=FALSE}
+#logistic regression
+thresholds <- seq(0.1,0.7,0.1)
+fscore = array(0)
+logistic.predict = matrix('No', ncol = length(thresholds), nrow = nrow(crossval))
+for(i in 1:length(thresholds)){
+  logistic.fit <- train(Churn~.,data=train,trControl=trainControl(method="cv",number=10)
+                     ,method="glm",family="binomial")
+  predicted_prob <- predict(logistic.fit,newdata=crossval,type="prob")[,2]
+  logistic.predict[,i][predicted_prob>thresholds[i]] <- "Yes"
+  temp <- table(logistic.predict[,i], actual_churn)
+  prec <- temp[2,2]/(temp[2,2] + temp[2,1])
+  recall <- temp[2,2]/(temp[2,2] + temp[1,2])
+  fscore[i] <- (2*prec*recall)/(prec + recall)
+}
+data.frame(thresholds, fscore)
+max_acc <- which.max(fscore)
+paste("Maximum F1-score is for thresold value of ", thresholds[max_acc], " and is = ",round(fscore[max_acc],4))
+logistic.predict <- as.vector(logistic.predict[,max_acc])
+t1 <- table(logistic.predict, actual_churn)
+paste("Accuracy of the model is: ",round(mean(logistic.predict == actual_churn),4))
+t1
+f_cfm(t1)
+f_bar(logistic.predict, actual_churn)
+```
+
+```{r, warning=FALSE}
+#Classification Tree
+tree.fit=train(Churn~.,data=train,trControl=trainControl(method="cv",number=10)
+               ,method="rpart")
+plot(tree.fit$finalModel)
+text(tree.fit$finalModel,pretty=0,cex=0.7)
+tree.predict=predict(tree.fit,crossval)
+t2 <- table(predicted_churn=tree.predict,actual_churn)
+t2
+f_cfm(t2)
+f_bar(tree.predict, actual_churn)
+round(mean(tree.predict==actual_churn),4)
+```
+
+```{r, warning=FALSE}
+#Random Forest
+
+rf.fit=train(Churn~.,data=train,trControl=trainControl(method="cv",number=10) ,method="rf")
+rf.predict=predict(rf.fit,crossval)
+t3 <- table(predicted_churn=rf.predict,actual_churn)
+t3
+f_cfm(t3)
+f_bar(rf.predict, actual_churn)
+round(mean(rf.predict==actual_churn),4)
+```
+
+```{r,warning=FALSE}
+#SVM
+set.seed(2021)
+tune.out=tune(svm, Churn~., data = train, kernel = "radial", ranges = list(cost = c(0.1, 1, 5, 10), gamma = c(0.01, 0.1, 1, 5, 10, 100)))
+summary(tune.out)
+svm.fit=svm(Churn~.,data=train,kernel="radial",gamma=0.1,cost=1)
+svm.predict=predict(svm.fit,crossval)
+t4 <- table(predicted_churn=svm.predict,actual_churn)
+t4
+f_cfm(t4)
+f_bar(svm.predict, actual_churn)
+round(mean(svm.predict==actual_churn),4)
+```
+
+```{r}
+misclassification_rate_logistic=(mean(logistic.predict!=actual_churn))*100
+misclassification_rate_tree=(mean(tree.predict!=actual_churn))*100
+misclassification_rate_forest=(mean(rf.predict!=actual_churn))*100
+misclassification_rate_svm=(mean(svm.predict!=actual_churn))*100
+paste("Misclassification Error Rate for Logistic Regression is",round(misclassification_rate_logistic,2),"%")
+paste("Misclassification Error Rate for Decision Tree is",round(misclassification_rate_tree,2),"%")
+paste("Misclassification Error Rate for Random Forest is",round(misclassification_rate_forest,2),"%")
+paste("Misclassification Error Rate for SVM is",round(misclassification_rate_svm,2),"%")
+```
+
+```{r, warning=FALSE}
+#Choice is Random Forest
+#Fit on test data set
+
+actual.churn.test=test$Churn
+rf.predict.test=predict(rf.fit,test)
+t5 <- table(rf.predict.test,actual.churn.test)
+t5
+f_cfm(t5)
+f_bar(rf.predict.test, actual.churn.test)
+misclassification.final=mean(rf.predict.test!=actual.churn.test)*100
+paste("Misclassification Error Rate for final model is",round(misclassification.final,4),"%")
+```
+
+```{r}
+#Assessing final model accuracy via ROC curve
+rf.predict=predict(rf.fit,test,type="prob")
+ROC=roc(test$Churn, rf.predict[,2])
+plot(ROC,col="blue")
+paste("Area under the curve is",round(auc(ROC),2))
+```
+
+```{r}
+
+```
+
