@@ -1,14 +1,3 @@
----
-output:
-  word_document: default
-  html_document: default
----
-
-```{r}
-paste("Title: Will the Telecom Customer Churn?- A Classification Analysis")
-paste("Authors: Rajdeep Saha & Soumik Karmakar")
-```
-
 ```{r}
 rm(list=ls())
 library(ggplot2)
